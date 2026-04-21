@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Ascend Pi</title>
+
+<script src="https://sdk.minepi.com/pi-sdk.js"></script>
+
+<style>
+body { margin: 0; background: #000; color: #d4af37; font-family: 'Segoe UI', sans-serif; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; touch-action: none; }
+canvas { background: #111; border: 2px solid #d4af37; border-radius: 8px; width: 100vw; height: 100vh; max-width: 400px; max-height: 600px; display: block; }
+#overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; text-align: center; }
+.gold-btn { background: #d4af37; color: #000; padding: 18px 45px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; text-transform: uppercase; font-size: 20px; box-shadow: 0 4px 15px rgba(255,68,0,0.4); margin: 10px; }
+#score-ui { position: absolute; top: 15px; width: 350px; display: flex; justify-content: space-between; font-weight: bold; font-size: 18px; pointer-events: none; z-index: 50; text-shadow: 2px 2px #000; }
+</style>
+</head>
+
+<body>
+
+<div id="score-ui">
+<div>ALT: <span id="curH">0</span>m</div>
+<div>BEST: <span id="bestH">0</span>m</div>
+</div>
+
+<div id="overlay">
+<h2 id="loginStatus">Logging in...</h2>
+<h1 id="title">ASCEND PI</h1>
+<p id="info-text">Collect Blue Gems to freeze lava!</p>
+
+<button id="action-btn" class="gold-btn" onclick="startGame()" disabled>START CLIMB</button>
+
+<button id="retry-btn" class="gold-btn" onclick="payRetry()" style="display:none;">
+RETRY (0.01 Pi)
+</button>
+</div>
+
+<audio id="bgMusic" loop preload="auto">
+<source src="music.mp3" type="audio/mpeg">
+</audio>
+
+<canvas id="gameCanvas"></canvas>
+
+<script type="module">
+// Firebase
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const app = initializeApp({
+  apiKey: "AIzaSyDeaQF-003Hu6EAK4S0hEQyBs77en-YTIU",
+  authDomain: "pi-ramid-ascent.firebaseapp.com",
+  projectId: "pi-ramid-ascent"
+});
+const db = getFirestore(app);
+
+// Pi Login
+Pi.init({ version: "2.0" });
+
+window.piUser = null;
+
+setTimeout(() => {
+  Pi.authenticate(['username'], function(){})
+    .then(auth => {
+      window.piUser = auth.user;
+      document.getElementById("loginStatus").innerText =
+        "Welcome " + auth.user.username;
+      document.getElementById("action-btn").disabled = false;
+    })
+    .catch(() => {
+      document.getElementById("loginStatus").innerText = "Login Failed";
+    });
+}, 1000);
+
+// Payment
+window.payRetry = function() {
+  Pi.createPayment({ amount: 0.01, memo: "Retry" }, {
+    onReadyForServerCompletion: () => resumeGame()
+  });
+};
+
+// Save score
+window.saveScore = async function(score) {
+  if (!window.piUser) return;
+  await addDoc(collection(db, "leaderboard"), {
+    username: window.piUser.username,
+    score: score
+  });
+};
+</script>
+
+<script>
+// ===== ORIGINAL GAME WITH SAFE FIXES =====
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const audio = document.getElementById('bgMusic');
+const info = document.getElementById('info-text');
+const title = document.getElementById('title');
+
+canvas.width = 400; canvas.height = 600;
+
+let height = 0, highScore = localStorage.getItem('pyramid_gems_v3.2') || 0;
+let gameOver = true, musicStarted = false;
+let player = { x: 200, y: 300, r: 12, vy: 0, vx: 0 };
+let platforms = [], cameraY = 0;
+
+let lavaHeight = 0;
+let lavaSpeed = 0.25;
+let lavaActive = false;
+let waveTime = 0;
+let freezeTimer = 0;
+
+let canRetry = false;
+let lavaStartDelay = 180;
+
+document.getElementById('bestH').innerText = highScore;
+
+function resetGame() {
+  height = 0; cameraY = 0;
+  lavaHeight = 0; lavaActive = false;
+  waveTime = 0; freezeTimer = 0;
+  lavaStartDelay = 180;
+
+  player = { x: 200, y: 300, r: 12, vy: 0, vx: 0 };
+  platforms = [{ x: 100, y: 380, w: 200, h: 30, gem: false }];
+  for (let i = 1; i < 10; i++) addPlatform(380 - i * 140);
+
+  document.getElementById('curH').innerText = "0";
+}
+
+function addPlatform(y) {
+  let w = Math.max(80, 130 - (height / 10));
+  let hasGem = Math.random() < 0.15;
+  platforms.push({ x: Math.random() * (400 - w), y, w, h: 18, gem: hasGem });
+}
+
+function startGame() {
+  if (!window.piUser) return alert("Login required");
+
+  resetGame();
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('retry-btn').style.display = 'none';
+
+  if (!musicStarted) { audio.play().catch(()=>{}); musicStarted = true; }
+
+  gameOver = false;
+  canRetry = false;
+
+  setTimeout(() => lavaActive = true, 3000);
+}
+
+function endGame(reason) {
+  gameOver = true;
+  canRetry = true;
+
+  title.innerText = reason;
+  info.innerText = "Altitude: " + height + "m";
+
+  document.getElementById('overlay').style.display = 'flex';
+  document.getElementById('retry-btn').style.display = 'block';
+
+  saveScore(height);
+}
+
+function resumeGame() {
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('retry-btn').style.display = 'none';
+
+  gameOver = false;
+  canRetry = false;
+
+  player.vy = -10;
+}
+
+function payRetry() {
+  if (!canRetry) return;
+  window.payRetry();
+}
+
+function move(inputX) {
+  const rect = canvas.getBoundingClientRect();
+  const scale = 400 / rect.width;
+  const mouseX = (inputX - rect.left) * scale;
+  player.vx = (mouseX - player.x) * 0.12;
+}
+
+window.addEventListener('mousemove', e => { if(!gameOver) move(e.clientX); });
+window.addEventListener('touchmove', e => {
+  if(!gameOver) { move(e.touches[0].clientX); e.preventDefault(); }
+}, { passive: false });
+
+function update() {
+  if (gameOver) return;
+
+  player.x += player.vx;
+  player.vy += 0.35;
+  player.y += player.vy;
+
+  if (player.x < 10) player.x = 10;
+  if (player.x > 390) player.x = 390;
+
+  if (lavaStartDelay > 0) lavaStartDelay--;
+  else if (freezeTimer > 0) freezeTimer--;
+  else if (lavaActive) lavaHeight += lavaSpeed;
+
+  waveTime += 0.05;
+
+  platforms.forEach(p => {
+    if (player.vy > 0 && player.y + player.r > p.y &&
+        player.y + player.r < p.y + p.h + 15 &&
+        player.x > p.x - 10 && player.x < p.x + p.w + 10) {
+
+      player.y = p.y - player.r;
+      player.vy = -12;
+
+      if (p.gem) { p.gem = false; freezeTimer = 300; }
+
+      let currentAlt = Math.floor((380 - p.y) / 10);
+      if (currentAlt > height) {
+        height = currentAlt;
+        document.getElementById('curH').innerText = height;
+      }
+    }
+  });
+
+  if (player.y < cameraY + 250)
+    cameraY += (player.y - 250 - cameraY) * 0.1;
+
+  if (platforms[platforms.length - 1].y > cameraY - 150)
+    addPlatform(platforms[platforms.length - 1].y - 140);
+
+  let playerScreenY = player.y - cameraY;
+  let currentLavaY = 600 - lavaHeight;
+  let waveY = currentLavaY + Math.sin(player.x * 0.04 + waveTime) * 12;
+
+  if (player.y > cameraY + 680)
+    endGame("FALLEN!");
+  else if (lavaActive && lavaHeight > 40 && lavaStartDelay <= 0 &&
+           playerScreenY + player.r > waveY)
+    endGame("BURNED!");
+}
+
+function draw() {
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, 400, 600);
+
+  ctx.save();
+  ctx.translate(0, -cameraY);
+
+  platforms.forEach(p => {
+    ctx.fillStyle = '#d4af37';
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+  });
+
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // 🔥 VISIBLE LAVA
+  if (lavaHeight > 1) {
+    let baseY = 600 - lavaHeight;
+
+    ctx.beginPath();
+    ctx.moveTo(0, 600);
+    for (let x = 0; x <= 400; x += 5) {
+      let y = baseY + Math.sin(x * 0.04 + waveTime) * 15;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(400, 600);
+    ctx.closePath();
+
+    let grad = ctx.createLinearGradient(0, baseY - 20, 0, 600);
+    grad.addColorStop(0, '#ffff00');
+    grad.addColorStop(0.2, '#ff9900');
+    grad.addColorStop(0.5, '#ff3300');
+    grad.addColorStop(1, '#660000');
+
+    ctx.fillStyle = grad;
+    ctx.shadowBlur = 25;
+    ctx.shadowColor = "#ff3300";
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  update();
+  requestAnimationFrame(draw);
+}
+
+draw();
+
+</script>
+
+</body>
+</html>

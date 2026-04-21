@@ -5,8 +5,7 @@ const app = express();
 app.use(express.json());
 
 // 🔐 IMPORTANT: paste your Pi API key BELOW (only on your computer)
-const PI_API_KEY = process.env.PI_API_KEY || "jxauu8rfvdb8vqojbss9uohhajm6ecyqcspjcfjdoxg9k0vkvqqk3npdffbvzu4j
-";
+const PI_API_KEY = process.env.PI_API_KEY || "jxauu8rfvdb8vqojbss9uohhajm6ecyqcspjcfjdoxg9k0vkvqqk3npdffbvzu4j";
 
 // Health check
 app.get("/", (req, res) => {

@@ -7,12 +7,49 @@
 
 <script src="https://sdk.minepi.com/pi-sdk.js"></script>
 
+
 <style>
 body { margin: 0; background: #000; color: #d4af37; font-family: 'Segoe UI', sans-serif; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; touch-action: none; }
 canvas { background: #111; border: 2px solid #d4af37; border-radius: 8px; width: 100vw; height: 100vh; max-width: 400px; max-height: 600px; display: block; }
-#overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; text-align: center; }
-.gold-btn { background: #d4af37; color: #000; padding: 18px 45px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; text-transform: uppercase; font-size: 20px; box-shadow: 0 4px 15px rgba(255,68,0,0.4); margin: 10px; }
-#score-ui { position: absolute; top: 15px; width: 350px; display: flex; justify-content: space-between; font-weight: bold; font-size: 18px; pointer-events: none; z-index: 50; text-shadow: 2px 2px #000; }
+
+#overlay, #leaderboardScreen {
+position:absolute; inset:0;
+background:rgba(0,0,0,0.9);
+display:flex; flex-direction:column;
+align-items:center; justify-content:center;
+text-align:center;
+z-index:100;
+}
+
+#leaderboardScreen { display:none; z-index:200; }
+
+.gold-btn {
+background:#d4af37; color:#000;
+padding:18px 45px;
+font-weight:bold;
+border:none; border-radius:5px;
+cursor:pointer;
+font-size:20px;
+margin:10px;
+}
+
+#score-ui {
+position:absolute; top:15px; width:350px;
+display:flex; justify-content:space-between;
+font-weight:bold; font-size:18px;
+pointer-events:none; z-index:50;
+text-shadow:2px 2px #000;
+}
+
+/* NEW */
+#pauseBtn {
+position:absolute;
+top:60px;
+right:20px;
+z-index:60;
+padding:8px 15px;
+font-size:14px;
+}
 </style>
 </head>
 
@@ -23,16 +60,22 @@ canvas { background: #111; border: 2px solid #d4af37; border-radius: 8px; width:
 <div>BEST: <span id="bestH">0</span>m</div>
 </div>
 
+<button id="pauseBtn" class="gold-btn" onclick="togglePause()" style="display:none;">PAUSE</button>
+
 <div id="overlay">
 <h2 id="loginStatus">Logging in...</h2>
 <h1 id="title">ASCEND PI</h1>
 <p id="info-text">Collect Blue Gems to freeze lava!</p>
 
 <button id="action-btn" class="gold-btn" onclick="startGame()" disabled>START CLIMB</button>
+<button class="gold-btn" onclick="openLeaderboard()">LEADERBOARD</button>
+<button id="retry-btn" class="gold-btn" onclick="payRetry()" style="display:none;">RETRY (0.01 Pi)</button>
+</div>
 
-<button id="retry-btn" class="gold-btn" onclick="payRetry()" style="display:none;">
-RETRY (0.01 Pi)
-</button>
+<div id="leaderboardScreen">
+<h2>🏆 Top 10 Players</h2>
+<div id="leaderboard" style="color:white;font-size:16px;margin:20px;">Loading...</div>
+<button class="gold-btn" onclick="closeLeaderboard()">BACK</button>
 </div>
 
 <audio id="bgMusic" loop preload="auto">
@@ -42,28 +85,26 @@ RETRY (0.01 Pi)
 <canvas id="gameCanvas"></canvas>
 
 <script type="module">
-// Firebase
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const app = initializeApp({
   apiKey: "AIzaSyDeaQF-003Hu6EAK4S0hEQyBs77en-YTIU",
   authDomain: "pi-ramid-ascent.firebaseapp.com",
   projectId: "pi-ramid-ascent"
 });
+
 const db = getFirestore(app);
 
-// Pi Login
 Pi.init({ version: "2.0" });
-
 window.piUser = null;
 
 setTimeout(() => {
   Pi.authenticate(['username'], function(){})
     .then(auth => {
       window.piUser = auth.user;
-      document.getElementById("loginStatus").innerText =
-        "Welcome " + auth.user.username;
+      document.getElementById("loginStatus").innerText = "Welcome " + auth.user.username;
       document.getElementById("action-btn").disabled = false;
     })
     .catch(() => {
@@ -71,25 +112,107 @@ setTimeout(() => {
     });
 }, 1000);
 
-// Payment
-window.payRetry = function() {
-  Pi.createPayment({ amount: 0.01, memo: "Retry" }, {
-    onReadyForServerCompletion: () => resumeGame()
-  });
-};
+// leaderboard
+async function loadLeaderboard() {
+  const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(10));
+  const snap = await getDocs(q);
 
-// Save score
+  let html = "";
+  snap.forEach(doc => {
+    const d = doc.data();
+    html += `<div>${d.username} - ${d.score}</div>`;
+  });
+
+  document.getElementById("leaderboard").innerHTML = html || "No scores yet";
+}
+
+window.loadLeaderboard = loadLeaderboard;
+
+// FIXED save
 window.saveScore = async function(score) {
   if (!window.piUser) return;
+
   await addDoc(collection(db, "leaderboard"), {
     username: window.piUser.username,
     score: score
   });
+
+  loadLeaderboard(); // 🔥 auto refresh
 };
+
+window.payRetry = function () {
+
+  if (!canRetry) return;
+
+  Pi.createPayment(
+    { amount: 0.01, memo: "Retry" },
+    {
+      onReadyForServerApproval: async function (paymentId) {
+  try {
+    await fetch("https://pi-backend-xyv1.onrender.com/approve-payment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ paymentId: paymentId }),
+    });
+  } catch (err) {
+    console.error("Approval error", err);
+  }
+},
+
+      onReadyForServerCompletion: async function (paymentId) {
+
+        try {
+          const res = await fetch("https://pi-backend-xyv1.onrender.com/verify-payment", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ paymentId: paymentId }),
+          });
+
+          const data = await res.json();
+
+          if (data.success) {
+            resumeGame();
+          } else {
+            alert("Payment verification failed");
+          }
+
+        } catch (err) {
+          alert("Server error");
+        }
+      },
+
+      onCancel: function () {
+        alert("Payment cancelled");
+      },
+
+      onError: function (err) {
+        console.error(err);
+        alert("Payment error");
+      }
+    }
+  );
+};
+
 </script>
 
 <script>
-// ===== ORIGINAL GAME WITH SAFE FIXES =====
+
+// UI
+function openLeaderboard(){
+document.getElementById("overlay").style.display="none";
+document.getElementById("leaderboardScreen").style.display="flex";
+loadLeaderboard();
+}
+function closeLeaderboard(){
+document.getElementById("leaderboardScreen").style.display="none";
+document.getElementById("overlay").style.display="flex";
+}
+
+// ===== GAME (UNCHANGED + PAUSE) =====
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -99,13 +222,21 @@ const title = document.getElementById('title');
 
 canvas.width = 400; canvas.height = 600;
 
+let paused = false;
+
+function togglePause(){
+if(gameOver) return;
+paused = !paused;
+document.getElementById("pauseBtn").innerText = paused ? "RESUME" : "PAUSE";
+}
+
 let height = 0, highScore = localStorage.getItem('pyramid_gems_v3.2') || 0;
 let gameOver = true, musicStarted = false;
 let player = { x: 200, y: 300, r: 12, vy: 0, vx: 0 };
 let platforms = [], cameraY = 0;
 
-let lavaHeight = 0;
-let lavaSpeed = 0.25;
+let lavaHeight = 0; 
+let lavaSpeed = 0.25; 
 let lavaActive = false;
 let waveTime = 0;
 let freezeTimer = 0;
@@ -140,10 +271,12 @@ function startGame() {
   resetGame();
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('retry-btn').style.display = 'none';
+  document.getElementById('pauseBtn').style.display = 'block';
 
   if (!musicStarted) { audio.play().catch(()=>{}); musicStarted = true; }
 
   gameOver = false;
+  paused = false;
   canRetry = false;
 
   setTimeout(() => lavaActive = true, 3000);
@@ -151,8 +284,9 @@ function startGame() {
 
 function endGame(reason) {
   gameOver = true;
-  canRetry = true;
+  document.getElementById('pauseBtn').style.display = 'none';
 
+  canRetry = true;
   title.innerText = reason;
   info.innerText = "Altitude: " + height + "m";
 
@@ -167,13 +301,21 @@ function resumeGame() {
   document.getElementById('retry-btn').style.display = 'none';
 
   gameOver = false;
+  paused = false;
   canRetry = false;
 
   player.vy = -10;
 }
 
 function payRetry() {
+
   if (!canRetry) return;
+
+  if (!window.piUser) {
+    alert("Still logging in... try again in a second");
+    return;
+  }
+
   window.payRetry();
 }
 
@@ -190,7 +332,7 @@ window.addEventListener('touchmove', e => {
 }, { passive: false });
 
 function update() {
-  if (gameOver) return;
+  if (gameOver || paused) return;
 
   player.x += player.vx;
   player.vy += 0.35;
@@ -259,7 +401,6 @@ function draw() {
 
   ctx.restore();
 
-  // 🔥 VISIBLE LAVA
   if (lavaHeight > 1) {
     let baseY = 600 - lavaHeight;
 

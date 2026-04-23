@@ -106,13 +106,12 @@ window.piUser = null;
 async function login() {
     try {
         const auth = await Pi.authenticate(['username', 'payments'], function(payment) {
-            // FIX: Automatically resolve any stuck payments on login
             fetch("https://pi-backend-xyv1.onrender.com/complete-payment", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ paymentId: payment.identifier, txid: payment.transaction.txid })
             }).then(r => r.json()).then(data => {
-                if(data.success) console.log("Stuck payment cleared automatically.");
+                if(data.success) console.log("Stuck payment cleared.");
             }).catch(e => console.error("Cleanup failed", e));
         });
         window.piUser = auth.user;
@@ -179,7 +178,6 @@ window.startPayment = function () {
 </script>
 
 <script>
-// --- GAMEPLAY SCRIPT ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const audio = document.getElementById('bgMusic');
@@ -226,6 +224,7 @@ function startGame() {
     setTimeout(() => lavaActive = true, 3000);
 }
 
+// Step 1 Fixed Function
 function endGame(reason) {
     gameOver = true;
     document.getElementById('pauseBtn').style.display = 'none';
@@ -237,15 +236,15 @@ function endGame(reason) {
     window.saveScore(height);
 }
 
+// Step 1 Fixed Function
 function resumeGame() {
     document.getElementById('overlay').style.display = 'none';
     document.getElementById('retry-btn').style.display = 'none';
     document.getElementById('pauseBtn').style.display = 'block';
+    lavaHeight = Math.max(0, lavaHeight - 100); 
     gameOver = false;
     paused = false;
     canRetry = false;
-    player.vy = -14; 
-    lavaHeight = Math.max(0, lavaHeight - 80);
 }
 
 function payRetry() { if (!canRetry || !window.piUser) return; window.startPayment(); }

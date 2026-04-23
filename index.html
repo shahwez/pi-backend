@@ -103,7 +103,6 @@ const db = getFirestore(app);
 
 window.piUser = null;
 
-// Handle Login
 async function login() {
     try {
         const auth = await Pi.authenticate(['username', 'payments'], function(payment) {
@@ -118,7 +117,6 @@ async function login() {
 }
 setTimeout(login, 500);
 
-// Leaderboard and Save Score
 window.loadLeaderboard = async function() {
     const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(10));
     const snap = await getDocs(q);
@@ -138,7 +136,6 @@ window.saveScore = async function(score) {
     });
 };
 
-// Payment Execution
 window.startPayment = function () {
     Pi.createPayment({
         amount: 0.01,
@@ -146,26 +143,28 @@ window.startPayment = function () {
         metadata: { type: "retry" }
     }, {
         onReadyForServerApproval: function (paymentId) {
-            // STEP 1: Tell your Render backend to approve the payment
             fetch("https://pi-backend-xyv1.onrender.com/approve-payment", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ paymentId: paymentId })
-            }).catch(e => alert("Backend approval failed. Check Render.com"));
+            }).catch(e => alert("Approval failed."));
         },
         onReadyForServerCompletion: function (paymentId, txid) {
-            // STEP 2: Tell your Render backend the user paid successfully
-            fetch("https://pi-backend-xyv1.onrender.com/verify-payment", {
+            // UPDATED: Now calls the correct completion endpoint
+            fetch("https://pi-backend-xyv1.onrender.com/complete-payment", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ paymentId: paymentId, txid: txid })
-            }).then(res => res.json()).then(data => {
+            })
+            .then(res => res.json())
+            .then(data => {
                 if (data.success) {
-                    resumeGame(); // Trigger the continue logic
+                    resumeGame();
                 } else {
-                    alert("Payment verification failed.");
+                    alert("Payment completion failed.");
                 }
-            }).catch(e => alert("Verification Error."));
+            })
+            .catch(e => alert("Completion Error."));
         },
         onCancel: () => console.log("Cancelled"),
         onError: (err) => alert("Payment Error: " + err.message)
@@ -174,7 +173,6 @@ window.startPayment = function () {
 </script>
 
 <script>
-// --- GAMEPLAY SCRIPT (FIXED CONTINUE LOGIC) ---
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const audio = document.getElementById('bgMusic');
@@ -191,22 +189,9 @@ let canRetry = false, lavaStartDelay = 180;
 
 document.getElementById('bestH').innerText = highScore;
 
-function togglePause(){
-    if(gameOver) return;
-    paused = !paused;
-    document.getElementById("pauseBtn").innerText = paused ? "RESUME" : "PAUSE";
-}
-
-function openLeaderboard(){
-    document.getElementById("overlay").style.display="none";
-    document.getElementById("leaderboardScreen").style.display="flex";
-    window.loadLeaderboard();
-}
-
-function closeLeaderboard(){
-    document.getElementById("leaderboardScreen").style.display="none";
-    document.getElementById("overlay").style.display="flex";
-}
+function togglePause(){ if(gameOver) return; paused = !paused; document.getElementById("pauseBtn").innerText = paused ? "RESUME" : "PAUSE"; }
+function openLeaderboard(){ document.getElementById("overlay").style.display="none"; document.getElementById("leaderboardScreen").style.display="flex"; window.loadLeaderboard(); }
+function closeLeaderboard(){ document.getElementById("leaderboardScreen").style.display="none"; document.getElementById("overlay").style.display="flex"; }
 
 function resetGame() {
     height = 0; cameraY = 0; lavaHeight = 0; lavaActive = false;
@@ -241,31 +226,22 @@ function endGame(reason) {
     title.innerText = reason;
     info.innerText = "Current Altitude: " + height + "m";
     document.getElementById('overlay').style.display = 'flex';
-    
-    // Show the Retry (Payment) button only here
     document.getElementById('retry-btn').style.display = 'block';
     window.saveScore(height);
 }
 
-// THIS IS CALLED AFTER SUCCESSFUL PAYMENT
 function resumeGame() {
     document.getElementById('overlay').style.display = 'none';
     document.getElementById('retry-btn').style.display = 'none';
     document.getElementById('pauseBtn').style.display = 'block';
-    
     gameOver = false;
     paused = false;
     canRetry = false;
-    
-    // Safety boost: Move player up and lava down so they don't die instantly
     player.vy = -14; 
     lavaHeight = Math.max(0, lavaHeight - 80);
 }
 
-function payRetry() {
-    if (!canRetry || !window.piUser) return;
-    window.startPayment();
-}
+function payRetry() { if (!canRetry || !window.piUser) return; window.startPayment(); }
 
 function move(inputX) {
     const rect = canvas.getBoundingClientRect();
@@ -275,33 +251,20 @@ function move(inputX) {
 }
 
 window.addEventListener('mousemove', e => { if(!gameOver) move(e.clientX); });
-window.addEventListener('touchmove', e => {
-    if(!gameOver) { move(e.touches[0].clientX); e.preventDefault(); }
-}, { passive: false });
+window.addEventListener('touchmove', e => { if(!gameOver) { move(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
 
 function update() {
     if (gameOver || paused) return;
-    player.x += player.vx;
-    player.vy += 0.35;
-    player.y += player.vy;
-    if (player.x < 10) player.x = 10;
-    if (player.x > 390) player.x = 390;
-    if (lavaStartDelay > 0) lavaStartDelay--;
-    else if (freezeTimer > 0) freezeTimer--;
-    else if (lavaActive) lavaHeight += lavaSpeed;
+    player.x += player.vx; player.vy += 0.35; player.y += player.vy;
+    if (player.x < 10) player.x = 10; if (player.x > 390) player.x = 390;
+    if (lavaStartDelay > 0) lavaStartDelay--; else if (freezeTimer > 0) freezeTimer--; else if (lavaActive) lavaHeight += lavaSpeed;
     waveTime += 0.05;
     platforms.forEach(p => {
-        if (player.vy > 0 && player.y + player.r > p.y &&
-            player.y + player.r < p.y + p.h + 15 &&
-            player.x > p.x - 10 && player.x < p.x + p.w + 10) {
-            player.y = p.y - player.r;
-            player.vy = -12;
+        if (player.vy > 0 && player.y + player.r > p.y && player.y + player.r < p.y + p.h + 15 && player.x > p.x - 10 && player.x < p.x + p.w + 10) {
+            player.y = p.y - player.r; player.vy = -12;
             if (p.gem) { p.gem = false; freezeTimer = 300; }
             let currentAlt = Math.floor((380 - p.y) / 10);
-            if (currentAlt > height) {
-                height = currentAlt;
-                document.getElementById('curH').innerText = height;
-            }
+            if (currentAlt > height) { height = currentAlt; document.getElementById('curH').innerText = height; }
         }
     });
     if (player.y < cameraY + 250) cameraY += (player.y - 250 - cameraY) * 0.1;
@@ -314,35 +277,23 @@ function update() {
 }
 
 function draw() {
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, 0, 400, 600);
-    ctx.save();
-    ctx.translate(0, -cameraY);
+    ctx.fillStyle = "#111"; ctx.fillRect(0, 0, 400, 600);
+    ctx.save(); ctx.translate(0, -cameraY);
     platforms.forEach(p => {
-        ctx.fillStyle = '#d4af37';
-        ctx.fillRect(p.x, p.y, p.w, p.h);
-        if (p.gem) {
-            ctx.fillStyle = '#00e5ff'; ctx.beginPath();
-            ctx.arc(p.x + p.w / 2, p.y - 10, 6, 0, Math.PI * 2); ctx.fill();
-        }
+        ctx.fillStyle = '#d4af37'; ctx.fillRect(p.x, p.y, p.w, p.h);
+        if (p.gem) { ctx.fillStyle = '#00e5ff'; ctx.beginPath(); ctx.arc(p.x + p.w / 2, p.y - 10, 6, 0, Math.PI * 2); ctx.fill(); }
     });
-    ctx.fillStyle = '#fff'; ctx.beginPath();
-    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
     if (lavaHeight > 1) {
-        let baseY = 600 - lavaHeight;
-        ctx.beginPath(); ctx.moveTo(0, 600);
-        for (let x = 0; x <= 400; x += 5) {
-            let y = baseY + Math.sin(x * 0.04 + waveTime) * 15;
-            ctx.lineTo(x, y);
-        }
+        let baseY = 600 - lavaHeight; ctx.beginPath(); ctx.moveTo(0, 600);
+        for (let x = 0; x <= 400; x += 5) { let y = baseY + Math.sin(x * 0.04 + waveTime) * 15; ctx.lineTo(x, y); }
         ctx.lineTo(400, 600); ctx.closePath();
         let grad = ctx.createLinearGradient(0, baseY - 20, 0, 600);
         grad.addColorStop(0, '#ffff00'); grad.addColorStop(0.5, '#ff3300'); grad.addColorStop(1, '#660000');
         ctx.fillStyle = grad; ctx.fill();
     }
-    update();
-    requestAnimationFrame(draw);
+    update(); requestAnimationFrame(draw);
 }
 draw();
 </script>

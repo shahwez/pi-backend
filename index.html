@@ -4,29 +4,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Ascend Pi</title>
-
     <script src="https://sdk.minepi.com/pi-sdk.js"></script>
     <script>
-        try {
-            Pi.init({ version: "2.0" });
-        } catch(e) {
-            console.error("SDK Load Error");
-        }
+        try { Pi.init({ version: "2.0" }); } catch(e) { console.error("SDK Error"); }
     </script>
-
     <style>
         body { margin: 0; background: #000; color: #d4af37; font-family: 'Segoe UI', sans-serif; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; touch-action: none; }
         canvas { background: #111; border: 2px solid #d4af37; border-radius: 8px; width: 100vw; height: 100vh; max-width: 400px; max-height: 600px; display: block; }
-        #overlay, #leaderboardScreen { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; z-index: 100; }
+        #overlay, #leaderboardScreen { position: absolute; inset: 0; background: rgba(0,0,0,0.92); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; z-index: 100; }
         #leaderboardScreen { display: none; z-index: 200; }
-        .gold-btn { background: #d4af37; color: #000; padding: 18px 45px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; font-size: 20px; margin: 10px; z-index: 1001; }
-        #score-ui { position: absolute; top: 15px; width: 350px; display: flex; justify-content: space-between; font-weight: bold; font-size: 18px; pointer-events: none; z-index: 50; text-shadow: 2px 2px #000; }
-        #pauseBtn { position: absolute; top: 60px; right: 20px; z-index: 60; padding: 8px 15px; font-size: 14px; }
+        .gold-btn { background: #d4af37; color: #000; padding: 15px 35px; font-weight: bold; border: none; border-radius: 5px; cursor: pointer; font-size: 18px; margin: 8px; width: 220px; }
+        .gold-btn:disabled { background: #666; cursor: not-allowed; }
+        #score-ui { position: absolute; top: 15px; width: 90%; max-width: 350px; display: flex; justify-content: space-between; font-weight: bold; font-size: 18px; pointer-events: none; z-index: 50; text-shadow: 2px 2px #000; }
+        #pauseBtn { position: absolute; top: 60px; right: 20px; z-index: 60; padding: 8px 15px; font-size: 14px; width: auto; }
     </style>
 </head>
 
 <body>
-
     <div id="score-ui">
         <div>ALT: <span id="curH">0</span>m</div>
         <div>BEST: <span id="bestH">0</span>m</div>
@@ -41,6 +35,7 @@
 
         <button id="action-btn" class="gold-btn" onclick="startGame()" disabled>START CLIMB</button>
         <button id="retry-btn" class="gold-btn" onclick="payRetry()" style="display:none;">CONTINUE (0.01 Pi)</button>
+        <button id="new-game-btn" class="gold-btn" onclick="startGame()" style="display:none; background: #888;">NEW GAME (FREE)</button>
         <button class="gold-btn" onclick="openLeaderboard()">LEADERBOARD</button>
     </div>
 
@@ -50,10 +45,7 @@
         <button class="gold-btn" onclick="closeLeaderboard()">BACK</button>
     </div>
 
-    <audio id="bgMusic" loop preload="auto">
-        <source src="music.mp3" type="audio/mpeg">
-    </audio>
-
+    <audio id="bgMusic" loop preload="auto"><source src="music.mp3" type="audio/mpeg"></audio>
     <canvas id="gameCanvas"></canvas>
 
     <script type="module">
@@ -66,40 +58,23 @@
             projectId: "pi-ramid-ascent"
         });
         const db = getFirestore(app);
-
         window.piUser = null;
 
         async function login() {
             try {
                 const auth = await Pi.authenticate(['username', 'payments'], function(payment) {
-                    // Logic to handle incomplete payments
+                    // Logic for incomplete payments
                 });
                 window.piUser = auth.user;
                 document.getElementById("loginStatus").innerText = "Welcome " + auth.user.username;
                 document.getElementById("action-btn").disabled = false;
-            } catch (err) {
-                document.getElementById("loginStatus").innerText = "Please Open in Pi Browser";
-            }
+            } catch (err) { document.getElementById("loginStatus").innerText = "Please Open in Pi Browser"; }
         }
         setTimeout(login, 500);
 
-        window.loadLeaderboard = async function() {
-            const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(10));
-            const snap = await getDocs(q);
-            let html = "";
-            snap.forEach(doc => {
-                const d = doc.data();
-                html += `<div>${d.username} - ${d.score}</div>`;
-            });
-            document.getElementById("leaderboard").innerHTML = html || "No scores yet";
-        }
-
         window.saveScore = async function(score) {
-            if (!window.piUser) return;
-            await addDoc(collection(db, "leaderboard"), {
-                username: window.piUser.username,
-                score: score
-            });
+            if (!window.piUser || score < 1) return;
+            try { await addDoc(collection(db, "leaderboard"), { username: window.piUser.username, score: score }); } catch(e){}
         };
 
         window.startPayment = function () {
@@ -108,32 +83,31 @@
                 memo: "Continue climb from " + height + "m",
                 metadata: { type: "retry" }
             }, {
-                onReadyForServerApproval: function (paymentId) {
+                onReadyForServerApproval: (paymentId) => {
                     fetch("https://pi-backend-xyv1.onrender.com/approve-payment", {
                         method: "POST", headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ paymentId: paymentId })
                     });
                 },
-                onReadyForServerCompletion: function (paymentId, txid) {
+                onReadyForServerCompletion: (paymentId, txid) => {
                     fetch("https://pi-backend-xyv1.onrender.com/complete-payment", {
                         method: "POST", headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ paymentId: paymentId, txid: txid })
                     })
                     .then(res => res.json())
-                    .then(data => {
-                        // CRITICAL FIX: Explicitly call the global resume function
-                        if (data.success) { 
-                            window.resumeGame(); 
-                        } else {
-                            alert("Payment not verified by server.");
-                        }
-                    })
-                    .catch(e => alert("Network Error: " + e.message));
+                    .then(data => { if (data.success) { window.resumeGame(); } else { alert("Verification failed."); resetRetryButton(); } })
+                    .catch(e => { alert("Error."); resetRetryButton(); });
                 },
-                onCancel: () => console.log("Cancelled"),
-                onError: (err) => alert("Payment Error: " + err.message)
+                onCancel: () => resetRetryButton(),
+                onError: (err) => { alert("Payment Error"); resetRetryButton(); }
             });
         };
+
+        function resetRetryButton() {
+            const btn = document.getElementById('retry-btn');
+            btn.disabled = false;
+            btn.innerText = "CONTINUE (0.01 Pi)";
+        }
     </script>
 
     <script>
@@ -148,32 +122,18 @@
         let paused = false, gameOver = true, musicStarted = false;
         let height = 0, highScore = localStorage.getItem('pyramid_gems_v3.2') || 0;
         let player = { x: 200, y: 300, r: 12, vy: 0, vx: 0 };
-        let platforms = [], cameraY = 0;
-        let lavaHeight = 0, lavaSpeed = 0.25, lavaActive = false, waveTime = 0, freezeTimer = 0;
-        let canRetry = false, lavaStartDelay = 180;
+        let platforms = [], cameraY = 0, lavaHeight = 0, lavaSpeed = 0.25;
+        let lavaActive = false, waveTime = 0, freezeTimer = 0, canRetry = false;
 
         document.getElementById('bestH').innerText = highScore;
 
-        window.togglePause = function(){ 
-            if(gameOver) return; 
-            paused = !paused; 
-            document.getElementById("pauseBtn").innerText = paused ? "RESUME" : "PAUSE"; 
-        };
-
-        window.openLeaderboard = function(){ 
-            document.getElementById("overlay").style.display = "none"; 
-            document.getElementById("leaderboardScreen").style.display = "flex"; 
-            window.loadLeaderboard(); 
-        };
-
-        window.closeLeaderboard = function(){ 
-            document.getElementById("leaderboardScreen").style.display = "none"; 
-            document.getElementById("overlay").style.display = "flex"; 
-        };
+        window.togglePause = () => { if(gameOver) return; paused = !paused; document.getElementById("pauseBtn").innerText = paused ? "RESUME" : "PAUSE"; };
+        window.openLeaderboard = () => { document.getElementById("overlay").style.display = "none"; document.getElementById("leaderboardScreen").style.display = "flex"; window.loadLeaderboard(); };
+        window.closeLeaderboard = () => { document.getElementById("leaderboardScreen").style.display = "none"; document.getElementById("overlay").style.display = "flex"; };
 
         function resetGame() {
             height = 0; cameraY = 0; lavaHeight = 0; lavaActive = false;
-            waveTime = 0; freezeTimer = 0; lavaStartDelay = 180;
+            waveTime = 0; freezeTimer = 0;
             player = { x: 200, y: 300, r: 12, vy: 0, vx: 0 };
             platforms = [{ x: 100, y: 380, w: 200, h: 30, gem: false }];
             for (let i = 1; i < 10; i++) addPlatform(380 - i * 140);
@@ -182,8 +142,7 @@
 
         function addPlatform(y) {
             let w = Math.max(80, 130 - (height / 10));
-            let hasGem = Math.random() < 0.25; // INCREASED GEM CHANCE FOR TESTING
-            platforms.push({ x: Math.random() * (400 - w), y, w, h: 18, gem: hasGem });
+            platforms.push({ x: Math.random() * (400 - w), y, w, h: 18, gem: Math.random() < 0.2 });
         }
 
         window.startGame = function() {
@@ -191,7 +150,7 @@
             resetGame();
             document.getElementById('overlay').style.display = 'none';
             document.getElementById('retry-btn').style.display = 'none';
-            document.getElementById('action-btn').style.display = 'block';
+            document.getElementById('new-game-btn').style.display = 'none';
             document.getElementById('pauseBtn').style.display = 'block';
             if (!musicStarted) { audio.play().catch(()=>{}); musicStarted = true; }
             gameOver = false; paused = false; canRetry = false;
@@ -205,40 +164,43 @@
             title.innerText = reason;
             info.innerText = "Altitude: " + height + "m";
             document.getElementById('overlay').style.display = 'flex';
-            
-            // HIDE Start button, SHOW Continue button
             document.getElementById('action-btn').style.display = 'none';
             document.getElementById('retry-btn').style.display = 'block';
-            
+            document.getElementById('retry-btn').disabled = false;
+            document.getElementById('retry-btn').innerText = "CONTINUE (0.01 Pi)";
+            document.getElementById('new-game-btn').style.display = 'block';
             window.saveScore(height);
         }
 
-        // ATTACH TO WINDOW SO THE MODULE CAN SEE IT
         window.resumeGame = function() {
             document.getElementById('overlay').style.display = 'none';
             document.getElementById('retry-btn').style.display = 'none';
-            document.getElementById('action-btn').style.display = 'block'; // Bring it back for next time
+            document.getElementById('new-game-btn').style.display = 'none';
             document.getElementById('pauseBtn').style.display = 'block';
             
-            lavaHeight = Math.max(0, lavaHeight - 250); // Significant pushback
+            // Safety: Push lava back, give player a platform and a jump
+            lavaHeight = Math.max(0, lavaHeight - 300);
+            platforms.push({ x: player.x - 50, y: player.y + 20, w: 100, h: 20, gem: false });
+            player.vy = -14; 
+            
             gameOver = false;
             paused = false;
             canRetry = false;
-            freezeTimer = 180; // Give a 3-second shield on resume
+            freezeTimer = 300; // 5 second safety freeze
         };
 
         window.payRetry = function() { 
             if (!canRetry || !window.piUser) return; 
+            document.getElementById('retry-btn').disabled = true;
+            document.getElementById('retry-btn').innerText = "Authorizing...";
             window.startPayment(); 
         };
 
         function move(inputX) {
             const rect = canvas.getBoundingClientRect();
-            const scale = 400 / rect.width;
-            const mouseX = (inputX - rect.left) * scale;
-            player.vx = (mouseX - player.x) * 0.12;
+            const mouseX = (inputX - rect.left) * (400 / rect.width);
+            player.vx = (mouseX - player.x) * 0.15;
         }
-
         window.addEventListener('mousemove', e => { if(!gameOver && !paused) move(e.clientX); });
         window.addEventListener('touchmove', e => { if(!gameOver && !paused) { move(e.touches[0].clientX); e.preventDefault(); } }, { passive: false });
 
@@ -246,28 +208,21 @@
             if (gameOver || paused) return;
             player.x += player.vx; player.vy += 0.35; player.y += player.vy;
             if (player.x < 10) player.x = 10; if (player.x > 390) player.x = 390;
-            
-            if (lavaStartDelay > 0) lavaStartDelay--; 
             if (freezeTimer > 0) freezeTimer--; 
-            
-            if (lavaActive && lavaStartDelay <= 0 && freezeTimer <= 0) {
-                lavaHeight += lavaSpeed;
-            }
+            if (lavaActive && freezeTimer <= 0) lavaHeight += lavaSpeed;
             waveTime += 0.05;
 
             platforms.forEach(p => {
-                // Landing logic
-                if (player.vy > 0 && player.y + player.r > p.y && player.y + player.r < p.y + p.h + 20 && player.x > p.x - 15 && player.x < p.x + p.w + 15) {
-                    player.y = p.y - player.r; 
-                    player.vy = -12;
-                    
-                    if (p.gem) { 
-                        p.gem = false; 
-                        freezeTimer = 600; // 10 SECONDS FREEZE
-                    }
-                    
+                // Landing
+                if (player.vy > 0 && player.y + player.r > p.y && player.y + player.r < p.y + p.h + 20 && player.x > p.x - 10 && player.x < p.x + p.w + 10) {
+                    player.y = p.y - player.r; player.vy = -12;
                     let currentAlt = Math.floor((380 - p.y) / 10);
                     if (currentAlt > height) { height = currentAlt; document.getElementById('curH').innerText = height; }
+                }
+                // Gem Collection (Distance based check)
+                if (p.gem) {
+                    let dx = player.x - (p.x + p.w/2), dy = player.y - (p.y - 15);
+                    if (Math.sqrt(dx*dx + dy*dy) < 35) { p.gem = false; freezeTimer = 600; }
                 }
             });
             
@@ -278,8 +233,8 @@
             let currentLavaY = 600 - lavaHeight;
             let waveY = currentLavaY + Math.sin(player.x * 0.04 + waveTime) * 12;
             
-            if (player.y > cameraY + 680) endGame("FALLEN!");
-            else if (lavaActive && lavaHeight > 40 && lavaStartDelay <= 0 && playerScreenY + player.r > waveY) endGame("BURNED!");
+            if (player.y > cameraY + 750) endGame("FALLEN!");
+            else if (lavaActive && lavaHeight > 40 && playerScreenY + player.r > waveY) endGame("BURNED!");
         }
 
         function draw() {
@@ -287,28 +242,20 @@
             ctx.save(); ctx.translate(0, -cameraY);
             platforms.forEach(p => {
                 ctx.fillStyle = '#d4af37'; ctx.fillRect(p.x, p.y, p.w, p.h);
-                if (p.gem) { 
-                    ctx.fillStyle = '#00e5ff'; 
-                    ctx.beginPath(); ctx.arc(p.x + p.w / 2, p.y - 12, 8, 0, Math.PI * 2); ctx.fill(); 
-                }
+                if (p.gem) { ctx.fillStyle = '#00e5ff'; ctx.beginPath(); ctx.arc(p.x + p.w/2, p.y - 15, 8, 0, Math.PI*2); ctx.fill(); }
             });
-            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
             ctx.restore();
             
             if (lavaHeight > 1) {
                 let baseY = 600 - lavaHeight; 
                 ctx.beginPath(); ctx.moveTo(0, 600);
-                for (let x = 0; x <= 400; x += 5) { 
-                    let y = baseY + Math.sin(x * 0.04 + waveTime) * 15; 
-                    ctx.lineTo(x, y); 
-                }
+                for (let x = 0; x <= 400; x += 5) { ctx.lineTo(x, baseY + Math.sin(x * 0.04 + waveTime) * 15); }
                 ctx.lineTo(400, 600); ctx.closePath();
-                
                 let grad = ctx.createLinearGradient(0, baseY - 20, 0, 600);
                 if (freezeTimer > 0) {
                     grad.addColorStop(0, '#00e5ff'); grad.addColorStop(1, '#001a4d');
-                    ctx.fillStyle = "#00e5ff"; ctx.font = "bold 20px Arial"; ctx.textAlign = "center";
-                    ctx.fillText("LAVA FROZEN!", 200, 100);
+                    ctx.fillStyle = "#00e5ff"; ctx.font = "bold 20px Arial"; ctx.textAlign = "center"; ctx.fillText("LAVA FROZEN!", 200, 100);
                 } else {
                     grad.addColorStop(0, '#ffff00'); grad.addColorStop(0.5, '#ff3300'); grad.addColorStop(1, '#660000');
                 }

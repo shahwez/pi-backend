@@ -139,9 +139,19 @@
         const db = getFirestore(app);
         window.piUser = null;
 
+        // FIXED: Added handling for payments that were interrupted (Required for Listing)
+        async function onIncompletePaymentFound(payment) {
+            return fetch("https://pi-backend-xyv1.onrender.com/complete-payment", {
+                method: "POST", 
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paymentId: payment.identifier, txid: payment.transaction.txid })
+            });
+        };
+
         async function login() {
             try {
-                const auth = await Pi.authenticate(['username', 'payments'], function(payment) {});
+                // FIXED: Passed the incomplete payment handler into the authenticate call
+                const auth = await Pi.authenticate(['username', 'payments'], onIncompletePaymentFound);
                 window.piUser = auth.user;
                 document.getElementById("loginStatus").innerText = "Welcome " + auth.user.username;
                 document.getElementById("action-btn").disabled = false;
@@ -164,7 +174,7 @@
                 });
                 lbDiv.innerHTML = html || "No scores yet!";
             } catch (e) { 
-                lbDiv.innerHTML = "Error loading leaderboard."; 
+                lbDiv.innerHTML = "Error loading. Check Firestore rules."; 
             }
         };
 
@@ -175,14 +185,16 @@
                     username: window.piUser.username, 
                     score: score 
                 }); 
-            } catch(e){}
+            } catch(e){
+                console.error("Save error:", e);
+            }
         };
 
         window.startPayment = function () {
             Pi.createPayment({
                 amount: 0.01, 
                 memo: "Continue climb from " + height + "m", 
-                metadata: { type: "retry" }
+                metadata: { type: "retry", appId: "pi-ramid-ascent" } // FIXED: Added metadata identifier
             }, {
                 onReadyForServerApproval: (paymentId) => {
                     fetch("https://pi-backend-xyv1.onrender.com/approve-payment", {
@@ -199,22 +211,21 @@
                     })
                     .then(res => res.json())
                     .then(data => { 
-                        // FORCE SUCCESS CHECK: If backend doesn't respond or data.success is missing
                         if (data && data.success) { 
                             window.resumeGame(); 
                         } else { 
-                            alert("Payment recorded, but verification failed. Trying to resume anyway...");
-                            window.resumeGame(); // Fail-safe: Resume anyway if the transaction hit the blockchain
+                            // Fail-safe to ensure game resumes if payment went through
+                            window.resumeGame(); 
                         } 
                     })
                     .catch(() => { 
-                        alert("Backend Timeout. Attempting to resume..."); 
-                        window.resumeGame(); // Fail-safe: Resume if network glitched but payment was made
+                        // Fail-safe for Render sleep/network timeout
+                        window.resumeGame(); 
                     });
                 },
                 onCancel: () => resetRetryButton(),
                 onError: () => { 
-                    alert("Payment Process Error"); 
+                    alert("Payment Error"); 
                     resetRetryButton(); 
                 }
             });
@@ -332,9 +343,7 @@
             document.getElementById('new-game-btn').style.display = 'none';
             document.getElementById('pauseBtn').style.display = 'block';
             
-            // Push lava down to give player room
             lavaHeight = Math.max(0, lavaHeight - 300);
-            // Ensure a platform exists exactly where player is
             platforms.push({ x: player.x - 50, y: player.y + 20, w: 100, h: 20, gem: false });
             player.vy = -14; 
             
